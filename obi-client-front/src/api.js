@@ -14,7 +14,7 @@ export const setApiContext = (user, role) => {
 
 // 2. Configuración base de Axios
 const api = axios.create({
-    baseURL: 'http://localhost:8000/api/v1', // Asegúrate que tu Python corre aquí
+    baseURL: 'http://localhost:8001/api/v1', // Asegúrate que tu Python corre aquí
     headers: {
         'Content-Type': 'application/json'
     }
