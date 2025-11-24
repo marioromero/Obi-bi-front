@@ -1,6 +1,6 @@
 <script setup>
 import {ref, computed} from 'vue';
-import api from '../api';
+import { apiLocal as api } from '../api'; // Usamos la API Local
 import ResultTable from './ResultTable.vue';
 
 // --- ESTADO EJECUCIÓN ---

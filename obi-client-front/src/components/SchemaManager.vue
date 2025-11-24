@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue';
-import api from '../api';
+import { apiLocal as api } from '../api'; // Usamos la API Local
 
 // --- ESTADO ---
 const connections = ref([]);
