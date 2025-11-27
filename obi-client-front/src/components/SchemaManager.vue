@@ -89,18 +89,22 @@ const saveDraft = async () => {
   successMsg.value = '';
 
   try {
-    // Re-empaquetamos el objeto JSON modificado a String
     const payload = {
       structure_json: JSON.stringify(currentDraft.value.structure_parsed)
     };
 
-    await api.put('/schema/draft', payload, {
+    // 1. Guardamos la respuesta en una variable
+    const res = await api.put('/schema/draft', payload, {
       params: { connection_key: activeConnection.value.key }
     });
 
-    successMsg.value = "Cambios guardados localmente.";
-    // Opcional: Cerrar el editor tras guardar
-    // selectedTable.value = null;
+    // 2. Actualizamos el estado de sincronización con lo que dijo el backend
+    if (currentDraft.value) {
+        currentDraft.value.is_synced = res.is_synced; // Ahora será false
+    }
+
+    successMsg.value = "Cambios guardados. Recuerda publicar para que la IA los vea.";
+
   } catch (e) {
     errorMsg.value = "Error al guardar: " + e.message;
   } finally {
