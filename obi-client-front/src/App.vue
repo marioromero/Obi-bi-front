@@ -5,11 +5,9 @@ import { initHandshake, sessionState } from './api';
 // Importación de Componentes
 import SchemaManager from './components/SchemaManager.vue';
 import SQLPlayground from './components/SQLPlayground.vue';
-import ReportViewer from './components/ReportViewer.vue';
-import AIChat from './components/AIChat.vue';
-import DashboardLayout from "./components/DashboardLayout.vue"; // <--- IMPORTANTE: Importamos el Chat
+import DashboardLayout from "./components/DashboardLayout.vue";
 
-const currentTab = ref('reports'); // Pestaña inicial por defecto
+const currentTab = ref('dashboards'); // Pestaña inicial por defecto
 
 onMounted(async () => {
   // Iniciamos la negociación de seguridad (Handshake)
@@ -30,7 +28,7 @@ onMounted(async () => {
     <!-- ESTADO 2: APLICACIÓN LISTA -->
     <div v-else>
 
-<!-- Header Global -->
+      <!-- Header Global -->
       <header class="bg-white shadow-sm border-b border-slate-200 px-6 py-3 sticky top-0 z-50">
         <div class="container mx-auto flex justify-between items-center">
 
@@ -54,7 +52,7 @@ onMounted(async () => {
               class="px-4 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2"
               :class="currentTab === 'dashboards' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
             >
-              <span>📊</span> Dashboards & Chat
+              <span>📊</span> Dashboards
             </button>
 
             <div class="w-px h-4 bg-slate-300 mx-1 hidden md:block"></div>
@@ -65,7 +63,15 @@ onMounted(async () => {
               class="px-4 py-1.5 text-xs font-bold rounded-md transition-all"
               :class="currentTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
             >
-              🛠️ Configurar BD
+              🛠️ Esquemas
+            </button>
+
+            <button
+              @click="currentTab = 'playground'"
+              class="px-4 py-1.5 text-xs font-bold rounded-md transition-all"
+              :class="currentTab === 'playground' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+            >
+              ⚡ SQL Lab
             </button>
           </div>
 
@@ -80,12 +86,10 @@ onMounted(async () => {
       <!-- Contenido Principal -->
       <main class="container mx-auto px-4 py-0 h-full">
 
-        <!-- IMPORTANTE: Importar DashboardLayout arriba en el script -->
         <DashboardLayout v-if="currentTab === 'dashboards'" />
 
         <SchemaManager v-else-if="currentTab === 'admin'" />
 
-        <!-- (Opcional: Mantener SQL Playground para debug técnico) -->
         <SQLPlayground v-else-if="currentTab === 'playground'" />
 
       </main>
