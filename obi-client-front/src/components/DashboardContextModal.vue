@@ -2,6 +2,11 @@
 import {ref, onMounted, computed} from 'vue';
 import {apiLocal} from '../api';
 
+// Función para obtener el nombre real de la tabla, sin importar cómo venga del back
+const getTableName = (t) => {
+  return t.table || t.name || t.table_name || 'unknown';
+};
+
 const props = defineProps({
   dashboard: {type: Object, required: true}
 });
@@ -80,7 +85,14 @@ onMounted(async () => {
 
 // Helper to get table ID
 const getTableId = (connKey, tableName) => {
-  return cloudMap.value[connKey]?.[tableName];
+  const cloudId = cloudMap.value[connKey]?.[tableName];
+
+  // Si tenemos el ID oficial de la nube, lo usamos.
+  if (cloudId) return cloudId;
+
+  // FALLBACK: Si no hay ID, creamos una clave única para que el UI no falle.
+  // Usamos un separador que no suela estar en nombres de tablas
+  return `temp_${connKey}_${tableName}`;
 };
 
 // Toggle Table Selection
@@ -164,159 +176,134 @@ const toggleConnExpand = (connKey) => {
   <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-white w-full max-w-4xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">
 
-      <!-- Header -->
       <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
         <div>
           <h2 class="text-lg font-bold text-slate-800">Configurar Contexto de Datos</h2>
           <p class="text-sm text-slate-500">Define qué tablas y columnas puede ver la IA en este dashboard.</p>
         </div>
         <button @click="$emit('close')" class="text-slate-400 hover:text-slate-600">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
         </button>
       </div>
 
-      <!-- Body -->
       <div class="flex-1 overflow-y-auto p-6 bg-slate-50/50">
 
         <div v-if="isLoading" class="flex justify-center py-12">
           <svg class="w-8 h-8 text-indigo-600 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
         </div>
 
         <div v-else class="space-y-4">
 
-          <div v-for="conn in connections" :key="conn.key"
-               class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-            <!-- Connection Header -->
+          <div v-for="conn in connections" :key="conn.key" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
             <button
-                @click="toggleConnExpand(conn.key)"
-                class="w-full px-4 py-3 bg-slate-50 flex items-center justify-between hover:bg-slate-100 transition-colors"
+              @click="toggleConnExpand(conn.key)"
+              class="w-full px-4 py-3 bg-slate-50 flex items-center justify-between hover:bg-slate-100 transition-colors"
             >
               <div class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                </svg>
-
+                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                 <span class="font-semibold text-slate-700">
-    {{ conn.name || conn.connection_name || conn.alias || conn.database || conn.key }}
-  </span>
-
+                  {{ conn.name || conn.connection_name || conn.alias || conn.database || conn.key }}
+                </span>
                 <span class="text-xs text-slate-400">({{ conn.type }})</span>
               </div>
               <svg
-                  class="w-5 h-5 text-slate-400 transition-transform"
-                  :class="expandedConnections[conn.key] ? 'rotate-180' : ''"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                class="w-5 h-5 text-slate-400 transition-transform"
+                :class="expandedConnections[conn.key] ? 'rotate-180' : ''"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
               >
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
               </svg>
             </button>
 
-            <!-- Tables List -->
             <div v-show="expandedConnections[conn.key]" class="p-2 space-y-2">
               <div v-if="!schemaData[conn.key]" class="p-4 text-center text-sm text-slate-400 italic">
                 No hay esquema sincronizado para esta conexión.
               </div>
 
               <div
-                  v-for="table in schemaData[conn.key]"
-                  :key="table.table"
-                  class="border border-slate-100 rounded-md transition-all"
-                  :class="selectionState[getTableId(conn.key, table.table)]?.selected ? 'bg-indigo-50/30 border-indigo-100' : 'bg-white'"
+                v-for="table in schemaData[conn.key]"
+                :key="getTableName(table)"
+                class="border border-slate-100 rounded-md transition-all"
+                :class="selectionState[getTableId(conn.key, getTableName(table))]?.selected ? 'bg-indigo-50/30 border-indigo-100' : 'bg-white'"
               >
-                <!-- Table Row -->
                 <div class="flex items-center p-3 gap-3">
                   <input
-                      type="checkbox"
-                      :checked="selectionState[getTableId(conn.key, table.table)]?.selected"
-                      @change="toggleTable(getTableId(conn.key, table.table), table.table)"
-                      class="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    type="checkbox"
+                    :checked="selectionState[getTableId(conn.key, getTableName(table))]?.selected"
+                    @change="toggleTable(getTableId(conn.key, getTableName(table)), getTableName(table))"
+                    class="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                   />
 
-                  <div class="flex-1 cursor-pointer" @click="toggleExpand(getTableId(conn.key, table.table))">
+                  <div class="flex-1 cursor-pointer" @click="toggleExpand(getTableId(conn.key, getTableName(table)))">
                     <div class="flex items-center gap-2">
-                      <span class="font-medium text-slate-700">{{ table.table }}</span>
-                      <span v-if="table.desc" class="text-xs text-slate-400 truncate max-w-[200px]">{{
-                          table.desc
-                        }}</span>
+                      <span class="font-medium text-slate-700">{{ getTableName(table) }}</span>
+                      <span v-if="table.desc" class="text-xs text-slate-400 truncate max-w-[200px]">{{ table.desc }}</span>
                     </div>
                   </div>
 
-                  <!-- Mode Selector (Only if selected) -->
-                  <div v-if="selectionState[getTableId(conn.key, table.table)]?.selected"
-                       class="flex items-center gap-2 bg-white rounded-lg border border-slate-200 p-1">
+                  <div v-if="selectionState[getTableId(conn.key, getTableName(table))]?.selected" class="flex items-center gap-2 bg-white rounded-lg border border-slate-200 p-1">
                     <button
-                        @click="setMode(getTableId(conn.key, table.table), 'default_only')"
-                        class="px-2 py-1 text-xs rounded-md transition-colors"
-                        :class="selectionState[getTableId(conn.key, table.table)].mode === 'default_only' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
-                        title="Solo columnas marcadas como importantes/default"
+                      @click="setMode(getTableId(conn.key, getTableName(table)), 'default_only')"
+                      class="px-2 py-1 text-xs rounded-md transition-colors"
+                      :class="selectionState[getTableId(conn.key, getTableName(table))].mode === 'default_only' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
+                      title="Solo columnas marcadas como importantes/default"
                     >
                       Prioritarios
                     </button>
                     <button
-                        @click="setMode(getTableId(conn.key, table.table), 'full')"
-                        class="px-2 py-1 text-xs rounded-md transition-colors"
-                        :class="selectionState[getTableId(conn.key, table.table)].mode === 'full' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
-                        title="Todas las columnas disponibles"
+                      @click="setMode(getTableId(conn.key, getTableName(table)), 'full')"
+                      class="px-2 py-1 text-xs rounded-md transition-colors"
+                      :class="selectionState[getTableId(conn.key, getTableName(table))].mode === 'full' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
+                      title="Todas las columnas disponibles"
                     >
                       Todo
                     </button>
                     <button
-                        @click="setMode(getTableId(conn.key, table.table), 'partial')"
-                        class="px-2 py-1 text-xs rounded-md transition-colors"
-                        :class="selectionState[getTableId(conn.key, table.table)].mode === 'partial' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
-                        title="Selección manual de columnas"
+                      @click="setMode(getTableId(conn.key, getTableName(table)), 'partial')"
+                      class="px-2 py-1 text-xs rounded-md transition-colors"
+                      :class="selectionState[getTableId(conn.key, getTableName(table))].mode === 'partial' ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-slate-500 hover:bg-slate-50'"
+                      title="Selección manual de columnas"
                     >
                       Manual
                     </button>
                   </div>
 
                   <button
-                      @click="toggleExpand(getTableId(conn.key, table.table))"
-                      class="p-1 text-slate-400 hover:text-indigo-600 transition-colors"
+                    @click="toggleExpand(getTableId(conn.key, getTableName(table)))"
+                    class="p-1 text-slate-400 hover:text-indigo-600 transition-colors"
                   >
-                    <svg class="w-5 h-5 transform transition-transform"
-                         :class="expandedTables[getTableId(conn.key, table.table)] ? 'rotate-180' : ''" fill="none"
-                         stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                    </svg>
+                    <svg class="w-5 h-5 transform transition-transform" :class="expandedTables[getTableId(conn.key, getTableName(table))] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                   </button>
                 </div>
 
-                <!-- Columns List (Expandable) -->
                 <div
-                    v-if="expandedTables[getTableId(conn.key, table.table)]"
-                    class="border-t border-slate-100 bg-slate-50/50 p-3 pl-11 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"
+                  v-if="expandedTables[getTableId(conn.key, getTableName(table))]"
+                  class="border-t border-slate-100 bg-slate-50/50 p-3 pl-11 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"
                 >
                   <label
-                      v-for="col in table.column_metadata"
-                      :key="col.col"
-                      class="flex items-start gap-2 p-2 rounded hover:bg-white hover:shadow-sm transition-all cursor-pointer"
+                    v-for="col in table.column_metadata"
+                    :key="col.col"
+                    class="flex items-start gap-2 p-2 rounded hover:bg-white hover:shadow-sm transition-all cursor-pointer"
                   >
                     <input
-                        type="checkbox"
-                        :disabled="selectionState[getTableId(conn.key, table.table)]?.mode !== 'partial'"
-                        :checked="
-                        selectionState[getTableId(conn.key, table.table)]?.mode === 'full' || 
-                        (selectionState[getTableId(conn.key, table.table)]?.mode === 'default_only' && col.is_default) ||
-                        (selectionState[getTableId(conn.key, table.table)]?.mode === 'partial' && selectionState[getTableId(conn.key, table.table)]?.columns[col.col])
+                      type="checkbox"
+                      :disabled="selectionState[getTableId(conn.key, getTableName(table))]?.mode !== 'partial'"
+                      :checked="
+                        selectionState[getTableId(conn.key, getTableName(table))]?.mode === 'full' ||
+                        (selectionState[getTableId(conn.key, getTableName(table))]?.mode === 'default_only' && col.is_default) ||
+                        (selectionState[getTableId(conn.key, getTableName(table))]?.mode === 'partial' && selectionState[getTableId(conn.key, getTableName(table))]?.columns[col.col])
                       "
-                        @change="toggleColumn(getTableId(conn.key, table.table), col.col)"
-                        class="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                      @change="toggleColumn(getTableId(conn.key, getTableName(table)), col.col)"
+                      class="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                     />
                     <div class="flex flex-col min-w-0">
                       <span class="text-xs font-medium text-slate-700 truncate" :title="col.col">{{ col.col }}</span>
-                      <span class="text-[10px] text-slate-400 truncate"
-                            :title="col.desc || col.alias">{{ col.alias || col.desc || '-' }}</span>
+                      <span class="text-[10px] text-slate-400 truncate" :title="col.desc || col.alias">{{ col.alias || col.desc || '-' }}</span>
                     </div>
-                    <span v-if="col.is_default"
-                          class="ml-auto text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Def</span>
+                    <span v-if="col.is_default" class="ml-auto text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Def</span>
                   </label>
                 </div>
 
@@ -327,17 +314,16 @@ const toggleConnExpand = (connKey) => {
         </div>
       </div>
 
-      <!-- Footer -->
       <div class="px-6 py-4 border-t border-slate-200 bg-white flex justify-end gap-3">
         <button
-            @click="$emit('close')"
-            class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+          @click="$emit('close')"
+          class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
         >
           Cancelar
         </button>
         <button
-            @click="save"
-            class="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm hover:shadow transition-all"
+          @click="save"
+          class="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm hover:shadow transition-all"
         >
           Guardar Configuración
         </button>
