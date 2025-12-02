@@ -22,7 +22,19 @@ const showDebug = ref(false);
 // 1. Cargar Conexiones
 const loadConnections = async () => {
   try {
-    connections.value = await api.get('/connections');
+    const res = await api.get('/connections');
+    console.log("API /connections response:", res); // DEBUG
+    
+    if (Array.isArray(res)) {
+      connections.value = res;
+    } else if (res && res.data && Array.isArray(res.data)) {
+      connections.value = res.data;
+    } else {
+      console.warn("API returned non-array for connections, defaulting to empty.", res);
+      connections.value = [];
+    }
+    
+    console.log("connections.value set to:", connections.value); // DEBUG
   } catch (e) {
     errorMsg.value = "Error cargando conexiones: " + e.message;
   }
@@ -30,6 +42,13 @@ const loadConnections = async () => {
 
 // 2. Seleccionar Conexión y Cargar Borrador
 const selectConnection = async (conn) => {
+  console.log("Selecting connection:", conn); // DEBUG
+  if (!conn || !conn.key) {
+    console.error("Connection key is missing!", conn);
+    errorMsg.value = "Error: La conexión seleccionada no tiene una clave válida.";
+    return;
+  }
+
   activeConnection.value = conn;
   currentDraft.value = null;
   selectedTable.value = null;

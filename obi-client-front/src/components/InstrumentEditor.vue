@@ -1,10 +1,11 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { apiLocal, apiCloud, sessionState } from '../api';
 import ResultTable from './ResultTable.vue';
 
 const props = defineProps({
   dashboardId: { type: Number, required: true },
+  dashboardContext: { type: [String, Array], default: () => [] },
   initialReport: { type: Object, default: null }
 });
 
@@ -22,20 +23,27 @@ const currentQuestion = ref('');
 const isProcessing = ref(false);
 const errorMsg = ref('');
 
-// --- ESTADO DEL CONTEXTO ---
-const cloudMap = ref({});
-const selectedTableIds = ref([]);
-const showContextPanel = ref(false);
+// --- CONTEXTO ---
+const parsedContext = computed(() => {
+  if (!props.dashboardContext) return [];
+  try {
+    return typeof props.dashboardContext === 'string' 
+      ? JSON.parse(props.dashboardContext) 
+      : props.dashboardContext;
+  } catch (e) {
+    console.error("Error parsing dashboard context", e);
+    return [];
+  }
+});
 
-// --- COMPUTED ---
-const selectedCount = computed(() => selectedTableIds.value.length);
-const totalTables = computed(() => Object.keys(cloudMap.value).length);
-const hasContext = computed(() => selectedTableIds.value.length > 0);
+const contextSummary = computed(() => {
+  const count = parsedContext.value.length;
+  if (count === 0) return "Sin contexto configurado";
+  return `${count} tablas configuradas (Optimizado)`;
+});
 
 // --- CARGA INICIAL ---
 onMounted(async () => {
-  await loadContext();
-
   if (props.initialReport) {
     messages.value.push({ 
       role: 'user', 
@@ -47,174 +55,22 @@ onMounted(async () => {
     });
     await executeSQL(props.initialReport.sql_query);
   } else {
-    if (totalTables.value > 0) {
-      showContextPanel.value = true;
+    // Mensaje de bienvenida
+    if (parsedContext.value.length === 0) {
+      messages.value.push({
+        role: 'system',
+        text: '⚠️ Este dashboard no tiene tablas configuradas. Pide al administrador que configure el contexto de datos.'
+      });
     }
   }
 });
-
-// Almacenar la información completa del esquema para cada conexión
-const schemaData = ref({});
-const connections = ref([]);
-
-const loadContext = async () => {
-  try {
-    const conns = await apiLocal.get('/connections');
-    connections.value = conns;
-    let allRefs = {};
-    let allSchemaData = {};
-
-    for (const conn of conns) {
-      try {
-        const draft = await apiLocal.get('/schema/draft', {
-          params: { connection_key: conn.key }
-        });
-        
-        if (draft.is_synced && draft.cloud_refs_json) {
-          const refs = JSON.parse(draft.cloud_refs_json);
-          for (const [tableName, cloudId] of Object.entries(refs)) {
-            allRefs[cloudId] = tableName;
-          }
-          
-          // Almacenar la información del esquema para esta conexión
-          if (draft.structure_json) {
-            allSchemaData[conn.key] = JSON.parse(draft.structure_json);
-          }
-        }
-      } catch (e) {
-        console.warn(`Error cargando draft para ${conn.key}:`, e);
-        continue;
-      }
-    }
-    
-    cloudMap.value = allRefs;
-    selectedTableIds.value = Object.keys(allRefs).map(id => parseInt(id));
-    schemaData.value = allSchemaData;
-    
-  } catch (e) {
-    console.error("Error cargando contexto:", e);
-    errorMsg.value = "No se pudo cargar el contexto de tablas.";
-  }
-};
-
-// Agrupar tablas por conexión
-const tablesByConnection = computed(() => {
-  const grouped = {};
-  
-  // Crear un mapa de tableId a connectionKey
-  const tableToConnMap = {};
-  for (const conn of connections.value) {
-    try {
-      const draft = schemaData.value[conn.key];
-      if (draft) {
-        // Encontrar el cloud_refs_json para esta conexión
-        // Necesitamos encontrar la conexión en conns para obtener cloud_refs_json
-        const connWithRefs = connections.value.find(c => c.key === conn.key);
-        if (connWithRefs && connWithRefs.cloud_refs_json) {
-          const refs = JSON.parse(connWithRefs.cloud_refs_json);
-          for (const [tableName, cloudId] of Object.entries(refs)) {
-            tableToConnMap[cloudId] = {
-              connKey: conn.key,
-              tableName: tableName
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`Error procesando conexión ${conn.key}:`, e);
-      continue;
-    }
-  }
-  
-  // Agrupar las tablas por conexión
-  for (const [tableId, tableName] of Object.entries(cloudMap.value)) {
-    const tableInfo = tableToConnMap[tableId];
-    const connKey = tableInfo ? tableInfo.connKey : 'default';
-    const fullTableName = tableInfo ? tableInfo.tableName : tableName;
-    
-    // Parsear el nombre de la tabla para obtener solo el nombre de la tabla sin la conexión
-    const parts = fullTableName.split('.');
-    const tableDisplayName = parts.length > 1 ? parts.slice(1).join('.') : fullTableName;
-    
-    if (!grouped[connKey]) {
-      grouped[connKey] = {};
-    }
-    
-    grouped[connKey][tableId] = {
-      name: tableDisplayName,
-      fullName: fullTableName
-    };
-  }
-  
-  return grouped;
-});
-
-const toggleTable = (tableId) => {
-  const id = parseInt(tableId);
-  const idx = selectedTableIds.value.indexOf(id);
-  if (idx > -1) {
-    selectedTableIds.value.splice(idx, 1);
-  } else {
-    selectedTableIds.value.push(id);
-  }
-};
-
-const toggleAllTables = () => {
-  if (selectedTableIds.value.length === Object.keys(cloudMap.value).length) {
-    selectedTableIds.value = [];
-  } else {
-    selectedTableIds.value = Object.keys(cloudMap.value).map(id => parseInt(id));
-  }
-};
-
-const isTableSelected = (tableId) => {
-  return selectedTableIds.value.includes(parseInt(tableId));
-};
 
 // --- LÓGICA CHAT IA ---
-// Función para determinar columnas relevantes según la pregunta del usuario
-const getRelevantColumns = (question, tableSchema) => {
-  // Convertir la pregunta a minúsculas para hacer la comparación insensible a mayúsculas
-  const lowerQuestion = question.toLowerCase();
-  
-  // Lista para almacenar las columnas relevantes
-  const relevantColumns = [];
-  
-  // Recorrer las columnas de la tabla
-  for (const column of tableSchema.column_metadata) {
-    // Si la columna está marcada como predeterminada, siempre se incluye
-    if (column.is_default) {
-      relevantColumns.push(column.col);
-      continue;
-    }
-    
-    // Verificar si el nombre de la columna o su descripción aparecen en la pregunta
-    if (lowerQuestion.includes(column.col.toLowerCase()) ||
-        (column.desc && lowerQuestion.includes(column.desc.toLowerCase()))) {
-      relevantColumns.push(column.col);
-      continue;
-    }
-    
-    // Verificar si alguna palabra clave de las instrucciones aparece en la pregunta
-    if (column.instructions) {
-      const lowerInstructions = column.instructions.toLowerCase();
-      const words = lowerInstructions.split(/\s+/);
-      if (words.some(word => lowerQuestion.includes(word))) {
-        relevantColumns.push(column.col);
-        continue;
-      }
-    }
-  }
-  
-  return relevantColumns;
-};
-
 const askAI = async () => {
   if (!currentQuestion.value.trim()) return;
 
-  if (selectedTableIds.value.length === 0) {
-    alert('Debes seleccionar al menos una tabla como contexto para la IA.');
-    showContextPanel.value = true;
+  if (parsedContext.value.length === 0) {
+    alert('No hay tablas configuradas en este dashboard. Configura el contexto primero.');
     return;
   }
 
@@ -226,83 +82,32 @@ const askAI = async () => {
   errorMsg.value = '';
 
   try {
-    // Construir schema_config optimizado
-    const schemaConfig = [];
-    
-    // Obtener las conexiones para mapear table_id a connection_key
-    const conns = await apiLocal.get('/connections');
-    const tableToConnMap = {};
-    
-    for (const conn of conns) {
-      try {
-        const draft = await apiLocal.get('/schema/draft', {
-          params: { connection_key: conn.key }
-        });
-        
-        if (draft.is_synced && draft.cloud_refs_json) {
-          const refs = JSON.parse(draft.cloud_refs_json);
-          for (const [tableName, cloudId] of Object.entries(refs)) {
-            tableToConnMap[cloudId] = conn.key;
-          }
-        }
-      } catch (e) {
-        console.warn(`Error cargando draft para ${conn.key}:`, e);
-        continue;
+    // Transformar Contexto a Schema Config para Laravel
+    const schemaConfig = parsedContext.value.map(item => {
+      const config = {
+        table_id: item.table_id,
+        use_full_schema: false,
+        include_columns: []
+      };
+
+      if (item.mode === 'full') {
+        config.use_full_schema = true;
+      } else if (item.mode === 'partial') {
+        config.include_columns = item.columns || [];
+      } else if (item.mode === 'default_only') {
+        // Backend entiende lista vacía + use_full_schema=false como default only (o lo que esté implementado)
+        // Según requerimiento: "Si mode es 'default_only' -> use_full_schema: false, include_columns: []"
+        config.include_columns = [];
       }
-    }
-    
-    // Para cada tabla seleccionada, determinar las columnas relevantes
-    for (const tableId of selectedTableIds.value) {
-      const tableIdStr = tableId.toString();
-      const connKey = tableToConnMap[tableIdStr];
-      
-      if (connKey && schemaData.value[connKey]) {
-        // Encontrar la tabla en el esquema
-        const tableSchema = schemaData.value[connKey].find(table => {
-          // Usar cloud_refs_json para mapear tableName a cloudId
-          const draft = conns.find(c => c.key === connKey);
-          if (draft) {
-            try {
-              const refs = JSON.parse(draft.cloud_refs_json || '{}');
-              return Object.values(refs).includes(parseInt(tableIdStr));
-            } catch (e) {
-              return false;
-            }
-          }
-          return false;
-        });
-        
-        if (tableSchema) {
-          // Obtener columnas relevantes para esta tabla
-          const relevantColumns = getRelevantColumns(q, tableSchema);
-          
-          // Añadir al schema_config
-          schemaConfig.push({
-            table_id: tableId,
-            use_full_schema: false,
-            include_columns: relevantColumns
-          });
-        } else {
-          // Si no se encuentra la tabla, enviar configuración vacía
-          schemaConfig.push({
-            table_id: tableId,
-            use_full_schema: false,
-            include_columns: []
-          });
-        }
-      } else {
-        // Si no hay datos de esquema, enviar configuración vacía
-        schemaConfig.push({
-          table_id: tableId,
-          use_full_schema: false,
-          include_columns: []
-        });
-      }
-    }
-    
+
+      return config;
+    });
+
+    const schemaTableIds = parsedContext.value.map(item => item.table_id);
+
     const payload = {
       question: q,
-      schema_table_ids: selectedTableIds.value,
+      schema_table_ids: schemaTableIds,
       conversation_id: conversationId.value,
       schema_config: schemaConfig
     };
@@ -429,24 +234,11 @@ const copyToClipboard = (text) => {
         </div>
 
         <div class="flex items-center gap-3">
-          <button
-            @click="showContextPanel = !showContextPanel"
-            class="flex items-center gap-2 px-4 py-2 rounded-lg border transition-all"
-            :class="showContextPanel 
-              ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
-              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
-            </svg>
-            <span class="text-sm font-medium">Contexto</span>
-            <span 
-              class="px-2 py-0.5 rounded-full text-xs font-bold"
-              :class="hasContext ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
-            >
-              {{ selectedCount }}/{{ totalTables }}
-            </span>
-          </button>
+          <!-- Context Summary Badge -->
+          <div class="px-3 py-1.5 bg-slate-100 rounded-lg border border-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            <span class="text-xs font-medium text-slate-600">Contexto: {{ contextSummary }}</span>
+          </div>
 
           <button
             @click="saveInstrument"
@@ -467,96 +259,6 @@ const copyToClipboard = (text) => {
 
       <!-- MAIN WORKSPACE -->
       <div class="flex-1 flex overflow-hidden">
-
-        <!-- PANEL IZQUIERDO: CONTEXTO (Toggleable) -->
-        <transition name="slide">
-          <div 
-            v-if="showContextPanel" 
-            class="w-72 bg-slate-50 border-r border-slate-200 flex flex-col flex-shrink-0"
-          >
-            <div class="p-4 border-b border-slate-200 bg-white">
-              <div class="flex items-center justify-between mb-3">
-                <h3 class="font-semibold text-slate-700 text-sm">Tablas Disponibles</h3>
-                <button 
-                  @click="showContextPanel = false"
-                  class="text-slate-400 hover:text-slate-600"
-                >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                  </svg>
-                </button>
-              </div>
-              <p class="text-xs text-slate-500 mb-3">
-                Selecciona las tablas que la IA puede usar para generar consultas.
-              </p>
-              <button
-                @click="toggleAllTables"
-                class="w-full text-xs text-indigo-600 hover:text-indigo-800 font-medium py-1"
-              >
-                {{ selectedCount === totalTables ? 'Deseleccionar todas' : 'Seleccionar todas' }}
-              </button>
-            </div>
-
-            <div class="flex-1 overflow-y-auto p-3 space-y-1">
-              <div v-if="totalTables === 0" class="text-center py-8">
-                <svg class="w-12 h-12 mx-auto text-slate-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
-                </svg>
-                <p class="text-sm text-slate-400">No hay tablas sincronizadas</p>
-                <p class="text-xs text-slate-400 mt-1">Sincroniza tu esquema primero</p>
-              </div>
-
-              <!-- Mostrar las conexiones y sus tablas -->
-              <div v-for="(connTables, connKey) in tablesByConnection" :key="connKey" class="mb-4">
-                <div class="px-2 py-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wide bg-slate-100 rounded mb-1">
-                  {{ connKey }}
-                </div>
-                <label
-                  v-for="(tableInfo, tableId) in connTables"
-                  :key="tableId"
-                  class="flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all ml-2"
-                  :class="isTableSelected(tableId)
-                    ? 'bg-indigo-50 border border-indigo-200'
-                    : 'bg-white border border-slate-100 hover:border-slate-200'"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="isTableSelected(tableId)"
-                    @change="toggleTable(tableId)"
-                    class="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <div class="flex-1 min-w-0">
-                    <span class="text-sm font-medium text-slate-700 block">
-                      {{ tableInfo.name }}
-                    </span>
-                  </div>
-                  <svg
-                    v-if="isTableSelected(tableId)"
-                    class="w-4 h-4 text-indigo-500 flex-shrink-0"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                  </svg>
-                </label>
-              </div>
-            </div>
-
-            <div class="p-3 border-t border-slate-200 bg-white">
-              <div 
-                class="text-xs p-2 rounded-lg"
-                :class="hasContext ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'"
-              >
-                <span v-if="hasContext">
-                  ✓ {{ selectedCount }} tabla(s) seleccionada(s)
-                </span>
-                <span v-else>
-                  ⚠ Selecciona al menos una tabla
-                </span>
-              </div>
-            </div>
-          </div>
-        </transition>
 
         <!-- PANEL CENTRAL: CANVAS (RESULTADOS) -->
         <div class="flex-1 bg-slate-100 p-6 overflow-hidden flex flex-col min-w-0">
@@ -721,9 +423,6 @@ const copyToClipboard = (text) => {
               <p class="text-[10px] text-slate-400">
                 Enter para enviar • Shift+Enter para nueva línea
               </p>
-              <p class="text-[10px] text-slate-400">
-                Contexto: <span :class="hasContext ? 'text-green-600' : 'text-red-500'">{{ selectedCount }} tablas</span>
-              </p>
             </div>
           </div>
         </div>
@@ -732,22 +431,3 @@ const copyToClipboard = (text) => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.slide-enter-active,
-.slide-leave-active {
-  transition: all 0.3s ease;
-}
-
-.slide-enter-from,
-.slide-leave-to {
-  transform: translateX(-100%);
-  opacity: 0;
-}
-
-.slide-enter-to,
-.slide-leave-from {
-  transform: translateX(0);
-  opacity: 1;
-}
-</style>
