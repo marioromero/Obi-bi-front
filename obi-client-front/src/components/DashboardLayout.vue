@@ -107,24 +107,28 @@ const onEditorSaved = () => {
 
 const saveContext = async (contextData) => {
     try {
-        // Asumimos que el backend espera un string JSON o un objeto. 
-        // Dado que SQLite/MySQL a veces requieren string para JSON, enviaremos string si es necesario, 
-        // pero axios suele enviar JSON objects bien.
-        // Sin embargo, para consistencia con otros campos JSON vistos (cloud_refs_json), 
-        // es probable que el backend lo maneje.
-        // Vamos a enviar el objeto directamente, si falla, lo cambiamos a string.
-        // Pero el requerimiento dice: "emite este objeto para que el padre lo guarde".
-        
-        // Actualizamos localmente para reactividad inmediata
-        activeDashboard.value.context_definition = contextData;
+        // Verificar si contextData contiene elementos con table_id null
+        if (Array.isArray(contextData)) {
+            const nullTables = contextData.filter(item => item.table_id === null || item.table_id === undefined);
+            if (nullTables.length > 0) {
+                console.warn('🔍 LAYOUT SAVE: CUIDADO! contextData contiene elementos con table_id null:', nullTables);
+            }
+        }
 
-        await apiLocal.put(`/dashboards/${activeDashboard.value.id}`, {
+        const stringified = JSON.stringify(contextData);
+
+        // Actualizamos localmente para reactividad inmediata
+        activeDashboard.value.context_definition = stringified;
+
+        const updatePayload = {
             ...activeDashboard.value,
-            context_definition: JSON.stringify(contextData) // Guardamos como string por seguridad con SQLite
-        });
-        
+            context_definition: stringified // Guardamos como string por seguridad con SQLite
+        };
+
+        await apiLocal.put(`/dashboards/${activeDashboard.value.id}`, updatePayload);
         showContextModal.value = false;
     } catch (e) {
+        console.error('🔍 LAYOUT SAVE: Error guardando contexto:', e);
         alert("Error guardando contexto: " + e.message);
     }
 };
@@ -137,13 +141,12 @@ onMounted(() => {
 <template>
   <div class="flex h-[calc(100vh-80px)] bg-slate-100">
 
-    <!-- SIDEBAR IZQUIERDO: LISTA DE DASHBOARDS -->
     <aside class="w-64 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
         <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
             <h2 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Mis Dashboards</h2>
-            <button 
-                @click="createDashboard" 
-                class="text-indigo-600 hover:bg-indigo-100 p-1.5 rounded-md transition-colors" 
+            <button
+                @click="createDashboard"
+                class="text-indigo-600 hover:bg-indigo-100 p-1.5 rounded-md transition-colors"
                 title="Crear Nuevo Dashboard"
             >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
@@ -176,15 +179,13 @@ onMounted(() => {
         </ul>
     </aside>
 
-    <!-- ÁREA PRINCIPAL: GRID DE INSTRUMENTOS -->
     <main class="flex-1 overflow-y-auto p-8 relative bg-slate-50/50">
 
-        <!-- Header del Dashboard -->
         <div v-if="activeDashboard" class="mb-8 flex justify-between items-end border-b border-slate-200 pb-6">
             <div>
                 <div class="flex items-center gap-3">
                     <h1 class="text-3xl font-bold text-slate-800 tracking-tight">{{ activeDashboard.title }}</h1>
-                    <button 
+                    <button
                         @click="showContextModal = true"
                         class="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors"
                         title="Configurar Datos"
@@ -206,7 +207,6 @@ onMounted(() => {
             </button>
         </div>
 
-        <!-- Grid -->
         <div v-if="activeDashboard" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
             <div
@@ -214,22 +214,21 @@ onMounted(() => {
                 :key="report.id"
                 class="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col h-64 group"
             >
-                <!-- Card Header -->
                 <div class="px-5 py-4 border-b border-slate-100 flex justify-between items-start bg-white">
                     <div class="flex-1 min-w-0 pr-2">
                         <h3 class="font-bold text-slate-800 truncate text-base" :title="report.name">{{ report.name }}</h3>
                         <p class="text-[10px] text-slate-400 mt-0.5 truncate">ID: {{ report.id }} • {{ report.type || 'Tabla' }}</p>
                     </div>
                     <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                            @click="openEditInstrument(report)" 
+                        <button
+                            @click="openEditInstrument(report)"
                             class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                             title="Editar / Chat"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                         </button>
-                        <button 
-                            @click="deleteInstrument(report.id)" 
+                        <button
+                            @click="deleteInstrument(report.id)"
                             class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
                             title="Eliminar"
                         >
@@ -238,7 +237,6 @@ onMounted(() => {
                     </div>
                 </div>
 
-                <!-- Preview (SQL Snippet) -->
                 <div class="flex-1 p-0 overflow-hidden relative bg-slate-50 group-hover:bg-slate-100/50 transition-colors cursor-pointer" @click="openEditInstrument(report)">
                     <div class="absolute inset-0 p-4">
                         <div class="w-full h-full bg-white border border-slate-200 rounded-lg p-3 overflow-hidden">
@@ -247,7 +245,6 @@ onMounted(() => {
                             </code>
                         </div>
                     </div>
-                    <!-- Overlay al hacer hover -->
                     <div class="absolute inset-0 bg-indigo-900/0 group-hover:bg-indigo-900/5 transition-colors flex items-center justify-center">
                         <span class="opacity-0 group-hover:opacity-100 bg-white text-indigo-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm transform translate-y-2 group-hover:translate-y-0 transition-all">
                             Abrir Editor
@@ -255,9 +252,8 @@ onMounted(() => {
                     </div>
                 </div>
             </div>
-            
-            <!-- Botón "Nuevo" como tarjeta (opcional, para UX) -->
-            <button 
+
+            <button
                 @click="openNewInstrument"
                 class="border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center h-64 text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/30 transition-all group"
             >
@@ -269,7 +265,6 @@ onMounted(() => {
 
         </div>
 
-        <!-- Estado Vacío (Sin Dashboard Seleccionado) -->
         <div v-else class="h-full flex flex-col items-center justify-center text-slate-400">
             <div class="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
                 <svg class="w-10 h-10 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
@@ -280,7 +275,6 @@ onMounted(() => {
 
     </main>
 
-    <!-- MODAL EDITOR (OVERLAY) -->
     <InstrumentEditor
         v-if="showEditor"
         :dashboard-id="activeDashboard.id"

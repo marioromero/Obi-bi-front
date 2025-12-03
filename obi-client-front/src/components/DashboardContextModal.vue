@@ -25,23 +25,19 @@ const selectionState = ref({});
 // Load initial data
 onMounted(async () => {
   try {
-    // 1. Load Connections
+    // 1. Cargar Conexiones
     const res = await apiLocal.get('/connections');
     const conns = Array.isArray(res) ? res : (res?.data || []);
     connections.value = conns;
 
-    // 2. Load Drafts for each connection
+    // 2. Cargar Esquemas/Borradores
     for (const conn of conns) {
       try {
-        const draft = await apiLocal.get('/schema/draft', {
-          params: {connection_key: conn.key}
-        });
+        const draft = await apiLocal.get('/schema/draft', { params: { connection_key: conn.key } });
 
         if (draft.is_synced && draft.cloud_refs_json) {
-          // Store Cloud Map
           cloudMap.value[conn.key] = JSON.parse(draft.cloud_refs_json);
 
-          // Store Schema Structure
           if (draft.structure_json) {
             schemaData.value[conn.key] = JSON.parse(draft.structure_json);
           }
@@ -51,31 +47,93 @@ onMounted(async () => {
       }
     }
 
-    // 3. Initialize Selection from Dashboard Context
+    // 3. Inicializar Selección (Con recuperación de nombres)
     if (props.dashboard.context_definition) {
       try {
+        console.log('🔍 LOAD DEBUG: dashboard.context_definition raw:', props.dashboard.context_definition);
+        
         const savedContext = typeof props.dashboard.context_definition === 'string'
-            ? JSON.parse(props.dashboard.context_definition)
-            : props.dashboard.context_definition;
+          ? JSON.parse(props.dashboard.context_definition)
+          : props.dashboard.context_definition;
+
+        console.log('🔍 LOAD DEBUG: savedContext parsed:', savedContext);
+        console.log('🔍 LOAD DEBUG: savedContext type:', typeof savedContext);
+        console.log('🔍 LOAD DEBUG: savedContext is array:', Array.isArray(savedContext));
 
         if (Array.isArray(savedContext)) {
-          savedContext.forEach(item => {
+          console.log('🔍 LOAD DEBUG: Entrando al bucle de carga, length:', savedContext.length);
+          
+          for (let i = 0; i < savedContext.length; i++) {
+            const item = savedContext[i];
+            console.log(`🔍 LOAD DEBUG: Procesando elemento ${i}:`, item);
+            console.log(`🔍 LOAD DEBUG: item.table_id = ${item.table_id}, typeof = ${typeof item.table_id}`);
+            
             const colsMap = {};
-            if (item.columns) {
-              item.columns.forEach(c => colsMap[c] = true);
+            if (item.columns) item.columns.forEach(c => colsMap[c] = true);
+
+            // VALIDACIÓN CRÍTICA: No procesar elementos con table_id inválido
+            if (!item.table_id || item.table_id === null || item.table_id === undefined) {
+              console.warn('Contexto inválido detectado: elemento sin table_id válido', item);
+              console.warn('🔍 LOAD DEBUG: SALTANDO elemento con table_id inválido');
+              continue; // Saltar este elemento
             }
-            selectionState.value[item.table_id] = {
+
+            // INTENTO DE RECUPERAR EL NOMBRE:
+            let resolvedTableName = item.table_name;
+            console.log(`🔍 LOAD DEBUG: resolvedTableName inicial: ${resolvedTableName}`);
+
+            // Si no tiene nombre, lo buscamos en los esquemas cargados usando el ID
+            if (!resolvedTableName) {
+               console.log('🔍 LOAD DEBUG: Buscando nombre por ID en esquema...');
+               for (const [connKey, tables] of Object.entries(schemaData.value)) {
+                 console.log(`🔍 LOAD DEBUG: Revisando connKey: ${connKey}`);
+                 for (const t of tables) {
+                   const tId = cloudMap.value[connKey]?.[getTableName(t)];
+                   console.log(`🔍 LOAD DEBUG: tabla ${getTableName(t)} tiene tId=${tId}, buscando match con ${item.table_id}`);
+                   // Comparación laxa (==) por si string vs number
+                   if (tId == item.table_id) {
+                     resolvedTableName = getTableName(t);
+                     console.log(`🔍 LOAD DEBUG: MATCH encontrado! ${tId} == ${item.table_id} -> ${resolvedTableName}`);
+                     break;
+                   }
+                 }
+                 if (resolvedTableName) break;
+               }
+            }
+
+            // Usar el table_id como key, pero verificar que sea válido
+            const tableKey = String(item.table_id);
+            console.log(`🔍 LOAD DEBUG: tableKey = "${tableKey}" (de ${item.table_id})`);
+            
+            if (tableKey === 'null' || tableKey === 'undefined' || tableKey === '') {
+              console.warn('Contexto inválido detectado: table_id no se puede convertir a string válido', item);
+              console.warn('🔍 LOAD DEBUG: SALTANDO tablaKey inválido');
+              continue; // Saltar este elemento
+            }
+
+            console.log(`🔍 LOAD DEBUG: Agregando a selectionState[${tableKey}]:`, {
               mode: item.mode,
               columns: colsMap,
-              selected: true
+              selected: true,
+              tableName: resolvedTableName || 'Tabla Desconocida'
+            });
+
+            selectionState.value[tableKey] = {
+              mode: item.mode,
+              columns: colsMap,
+              selected: true,
+              tableName: resolvedTableName || 'Tabla Desconocida'
             };
-          });
+          }
+          
+          console.log('🔍 LOAD DEBUG: selectionState final:', JSON.parse(JSON.stringify(selectionState.value)));
         }
       } catch (e) {
         console.error("Error parsing saved context", e);
       }
+    } else {
+      console.log('🔍 LOAD DEBUG: No hay context_definition en dashboard');
     }
-
   } catch (e) {
     console.error("Error loading context data", e);
   } finally {
@@ -97,10 +155,16 @@ const getTableId = (connKey, tableName) => {
 
 // Toggle Table Selection
 const toggleTable = (tableId, tableName) => {
+  console.log(`🔍 TOGGLE DEBUG: toggleTable llamado con tableId="${tableId}", tableName="${tableName}"`);
+  console.log(`🔍 TOGGLE DEBUG: tableId typeof: ${typeof tableId}, parseInt(tableId): ${parseInt(tableId)}`);
+  console.log(`🔍 TOGGLE DEBUG: tableId es null/undefined: ${tableId === null}, ${tableId === undefined}`);
+  
   if (selectionState.value[tableId]?.selected) {
+    console.log(`🔍 TOGGLE DEBUG: Deseleccionando tabla ${tableId}`);
     // Deselect
     delete selectionState.value[tableId];
   } else {
+    console.log(`🔍 TOGGLE DEBUG: Seleccionando tabla ${tableId} - ${tableName}`);
     // Select with default mode
     selectionState.value[tableId] = {
       mode: 'default_only', // Default as per requirements ("Solo Campos Prioritarios" implies default/partial)
@@ -108,7 +172,11 @@ const toggleTable = (tableId, tableName) => {
       selected: true,
       tableName: tableName // Store for reference
     };
+    
+    console.log(`🔍 TOGGLE DEBUG: Estado después de selección:`, JSON.parse(JSON.stringify(selectionState.value[tableId])));
   }
+  
+  console.log(`🔍 TOGGLE DEBUG: selectionState completo después del toggle:`, JSON.parse(JSON.stringify(selectionState.value)));
 };
 
 // Change Mode
@@ -138,13 +206,44 @@ const toggleColumn = (tableId, colName) => {
 
 const save = () => {
   const result = [];
+  const invalidTables = []; // Para debugging
+  
+  console.log('🔍 SAVE DEBUG: selectionState actual:', JSON.parse(JSON.stringify(selectionState.value)));
+  console.log('🔍 SAVE DEBUG: Entrando al bucle de guardado...');
 
-  for (const [tableId, state] of Object.entries(selectionState.value)) {
-    if (!state.selected) continue;
+  for (const [key, state] of Object.entries(selectionState.value)) {
+    if (!state.selected) {
+      console.log(`🔍 SAVE DEBUG: Tabla ${key} no seleccionada, saltando...`);
+      continue;
+    }
 
+    console.log(`🔍 SAVE DEBUG: Procesando tabla ${key} - ${state.tableName}`);
+
+    // Obtener el ID real de la tabla
+    let finalId = parseInt(key);
+    console.log(`🔍 SAVE DEBUG: key=${key}, finalId=${finalId}, typeof finalId=${typeof finalId}`);
+    
+    // Si no es un número válido después del parse, es que probablemente
+    // se está usando un ID temporal que no se debería guardar
+    if (isNaN(finalId) || !finalId) {
+      console.log(`🔍 SAVE DEBUG: ID inválido detectado: ${key} -> ${finalId}`);
+      // Verificamos si es un ID temporal
+      if (key.startsWith('temp_')) {
+        console.warn(`Tabla descartada por ID temporal: ${state.tableName} (ID: ${key})`);
+        invalidTables.push({ name: state.tableName, reason: 'ID temporal' });
+        continue;
+      } else {
+        // Si no es temporal pero tampoco es un número válido, lo descartamos
+        console.warn(`Tabla descartada por ID inválido: ${state.tableName} (ID: ${key})`);
+        invalidTables.push({ name: state.tableName, reason: 'ID inválido' });
+        continue;
+      }
+    }
+    
+    // Si llegamos aquí, tenemos un ID numérico válido
     const entry = {
-      table_id: parseInt(tableId),
-      table_name: state.tableName,
+      table_id: finalId,
+      table_name: state.tableName || 'Sin Nombre',
       mode: state.mode,
       columns: []
     };
@@ -153,9 +252,28 @@ const save = () => {
       entry.columns = Object.keys(state.columns);
     }
 
+    console.log(`🔍 SAVE DEBUG: Agregando entrada válida:`, entry);
     result.push(entry);
   }
 
+  console.log('🔍 SAVE DEBUG: Resultado final antes de emit:', result);
+  console.log('🔍 SAVE DEBUG: invalidTables:', invalidTables);
+
+  // Si hay tablas inválidas, avisamos al usuario
+  if (invalidTables.length > 0) {
+    const warningMsg = `Se descartaron ${invalidTables.length} tabla(s) que no están sincronizadas con la nube: ` +
+                      invalidTables.map(t => t.name).join(', ') +
+                      '. Sincroniza el esquema en "Configurar Contexto" primero.';
+    alert(warningMsg);
+  }
+
+  // Solo guardamos si tenemos al menos una tabla válida
+  if (result.length === 0) {
+    alert('No se puede guardar el contexto: todas las tablas seleccionadas no están sincronizadas con la nube.');
+    return;
+  }
+
+  console.log('Contexto guardado con', result.length, 'tablas válidas');
   emit('save', result);
 };
 

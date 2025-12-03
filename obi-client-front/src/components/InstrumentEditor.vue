@@ -66,7 +66,10 @@ onMounted(async () => {
 });
 
 // --- LÓGICA CHAT IA ---
+// Reemplaza la función askAI completa:
+
 const askAI = async () => {
+  console.log("🔍 Contexto actual:", JSON.parse(JSON.stringify(parsedContext.value)));
   if (!currentQuestion.value.trim()) return;
 
   if (parsedContext.value.length === 0) {
@@ -74,6 +77,47 @@ const askAI = async () => {
     return;
   }
 
+  // 1. VALIDACIÓN DE CONSISTENCIA
+  // Detectamos tablas que no tienen un ID numérico válido (ej. IDs temporales o nulos)
+  const invalidTables = parsedContext.value.filter(item => {
+    const tableId = item.table_id;
+    // Debe ser un número válido y positivo
+    const numericId = Number(tableId);
+    return !tableId || !Number.isInteger(numericId) || numericId <= 0;
+  });
+
+  // Si hay tablas inválidas, DETENEMOS el proceso y avisamos al usuario.
+  if (invalidTables.length > 0) {
+    const tableNames = invalidTables.map(t => t.table_name || 'Desconocida').join(', ');
+    
+    // Categorizar tipos de problemas
+    const temporalTables = invalidTables.filter(t => String(t.table_id).startsWith('temp_'));
+    const invalidFormatTables = invalidTables.filter(t => !String(t.table_id).startsWith('temp_') && !Number.isInteger(Number(t.table_id)));
+    
+    let errorMsg = `⛔ No puedo procesar la solicitud. Las siguientes tablas no están sincronizadas correctamente con la nube:\n\n`;
+    
+    if (temporalTables.length > 0) {
+      errorMsg += `📝 Tablas con ID temporal (${temporalTables.length}): ` + temporalTables.map(t => t.table_name || 'Desconocida').join(', ') + '\n';
+    }
+    
+    if (invalidFormatTables.length > 0) {
+      errorMsg += `❌ Tablas con ID inválido (${invalidFormatTables.length}): ` + invalidFormatTables.map(t => t.table_name || 'Desconocida').join(', ') + '\n';
+    }
+    
+    errorMsg += '\n💡 Solución: Ve a "Configurar Contexto", asegúrate de sincronizar el esquema con la nube, y guarda la configuración.\n';
+    errorMsg += 'Las tablas con IDs temporales no aparecerán en el contexto hasta que se sincronicen.';
+
+    messages.value.push({ role: 'user', text: currentQuestion.value });
+    messages.value.push({
+      role: 'system',
+      text: errorMsg
+    });
+
+    currentQuestion.value = ''; // Limpiamos input pero no procesamos
+    return;
+  }
+
+  // Si llegamos aquí, todo es válido
   const q = currentQuestion.value;
   currentQuestion.value = '';
   messages.value.push({ role: 'user', text: q });
@@ -82,10 +126,10 @@ const askAI = async () => {
   errorMsg.value = '';
 
   try {
-    // Transformar Contexto a Schema Config para Laravel
+    // Transformar Contexto (Ya sabemos que todos tienen ID numérico)
     const schemaConfig = parsedContext.value.map(item => {
       const config = {
-        table_id: item.table_id,
+        table_id: Number(item.table_id),
         use_full_schema: false,
         include_columns: []
       };
@@ -95,15 +139,13 @@ const askAI = async () => {
       } else if (item.mode === 'partial') {
         config.include_columns = item.columns || [];
       } else if (item.mode === 'default_only') {
-        // Backend entiende lista vacía + use_full_schema=false como default only (o lo que esté implementado)
-        // Según requerimiento: "Si mode es 'default_only' -> use_full_schema: false, include_columns: []"
         config.include_columns = [];
       }
 
       return config;
     });
 
-    const schemaTableIds = parsedContext.value.map(item => item.table_id);
+    const schemaTableIds = parsedContext.value.map(item => Number(item.table_id));
 
     const payload = {
       question: q,
@@ -143,7 +185,8 @@ const askAI = async () => {
 
   } catch (e) {
     const txt = e.response?.data?.message || e.message;
-    messages.value.push({ role: 'error', text: 'Error: ' + txt });
+    const validationErrors = e.response?.data?.errors ? JSON.stringify(e.response.data.errors) : '';
+    messages.value.push({ role: 'error', text: 'Error: ' + txt + ' ' + validationErrors });
   } finally {
     isProcessing.value = false;
   }
